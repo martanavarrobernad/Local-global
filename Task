@@ -1,0 +1,220 @@
+""""
+GOLD STANDARD: LOCAL-GLOBAL (150 TRIALS VERSION)
+------------------------------------------------
+- 8 Bloques (2 reps x 4 tipos).
+- 150 Trials por bloque (25 Habituación + 125 Test).
+- Duración aprox: ~5 min 20s.
+- ITI: 1350 - 1650 ms.
+"""
+
+import random
+import os
+import pandas as pd
+from psychopy import core, parallel, gui, visual, event
+
+# ==============================================================================
+# 1. PARÁMETROS (AJUSTADOS A 150 TOTAL)
+# ==============================================================================
+# Cantidades
+HABITUATION_TRIALS = 25       # Fijos al inicio
+N_TEST_TOTAL = 125            # Fase experimental (125 útiles)
+# Total = 25 + 125 = 150 Trials
+
+GLOBAL_DEVIANT_PCT = 0.20     # 20% de 125 = 25 Deviants
+
+# Tiempos
+SOA_MS = 150                  
+ACTIVE_BEATS = [1, 4, 5]      
+ITI_VALUES = range(1350, 1651, 50) 
+
+# Configuración Visual (Fondo Gris + Letras Negras/Color)
+# Gris claro para fondo: [0.5, 0.5, 0.5]
+BG_COLOR = [0.5, 0.5, 0.5]
+VISUAL_COLORS = ['cyan', '#8B8000', 'black', 'magenta', 'red'] # Sin blanco
+
+# Visual Params
+VISUAL_ON_S = 0.60
+VISUAL_OFF_S = 0.10
+VISUAL_CYCLE = VISUAL_ON_S + VISUAL_OFF_S
+TARGETS = ['A', 'D', 'T'] # Targets reducidos para simplificar
+LETTERS_BASE = ['A', 'D', 'T', 'X', 'B', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'O', 'P']
+STIM_POOL = [L.upper() for L in LETTERS_BASE]
+DISTRACTORS = [x for x in STIM_POOL if x not in TARGETS]
+TARGET_PROBABILITY = 0.30
+MAX_NON_TARGET_STREAK = 4
+
+# Hardware
+EEG_PORT_ADDRESS = 0x0378
+PULSE_DURATION_S = 0.005
+
+try:
+    port_eeg = parallel.ParallelPort(address=EEG_PORT_ADDRESS)
+    print("Parallel Port: CONNECTED")
+except:
+    print("Parallel Port: SIMULATION MODE")
+    class DummyPort:
+        def setData(self, val): pass
+    port_eeg = DummyPort()
+
+def send_trigger(code):
+    port_eeg.setData(int(code))
+    core.wait(PULSE_DURATION_S)
+    port_eeg.setData(0)
+
+def encode_trigger(beat, side, local_kind, global_kind):
+    c = 0
+    c |= (beat & 0b111)
+    if local_kind == 'LD': c |= 0b00001000
+    if side == "left": c |= 0b00010000
+    elif side == "right": c |= 0b00100000
+    if global_kind == 'GD': c |= 0b01000000
+    return c
+
+# ==============================================================================
+# 2. GUI & SETUP
+# ==============================================================================
+dlg = gui.Dlg(title="LOCAL-GLOBAL (150 TRIALS)")
+dlg.addField("Subject ID:", "001")
+dlg.addField("Condition:", choices=["Inattentive (Visual Task)", "Attentive (Focus on Tactile)"])
+dlg.show()
+if not dlg.OK: core.quit()
+
+subj_id = dlg.data[0]
+cond_short = "Inatt" if "Inattentive" in dlg.data[1] else "Att"
+is_inattentive = (cond_short == "Inatt")
+
+RUNS_DIR = os.path.join("data_150trials", f"sub-{subj_id}", f"ses-{cond_short}")
+os.makedirs(RUNS_DIR, exist_ok=True)
+
+session_plan = [
+    ("monotone", "right"), ("monotone", "left"),
+    ("discordant", "right"), ("discordant", "left")
+] * 2
+random.shuffle(session_plan)
+
+# Ventana con Fondo Gris Claro
+win = visual.Window(size=[1024, 768], color=BG_COLOR, fullscr=False, units='height')
+txt_stim = visual.TextStim(win, height=0.2, font='Arial', bold=True, text='')
+fix_cross = visual.TextStim(win, text='+', height=0.05, color='black') # Cruz negra para contraste
+instr_stim = visual.TextStim(win, height=0.04, color='black', wrapWidth=1.2)
+
+# ==============================================================================
+# 3. LÓGICA DE GENERACIÓN
+# ==============================================================================
+def generate_trials(block_type, base_side):
+    side_alt = "left" if base_side == "right" else "right"
+    
+    seq_LS = { "sides": [base_side]*5, "local_kind": "LS", "pattern": base_side[0].upper()*5 }
+    seq_LD = { "sides": [base_side]*4 + [side_alt], "local_kind": "LD", "pattern": base_side[0].upper()*4 + side_alt[0].upper() }
+    
+    if block_type == 'monotone':
+        item_std = {**seq_LS, "global_kind": "GS"}
+        item_dev = {**seq_LD, "global_kind": "GD"}
+    else:
+        item_std = {**seq_LD, "global_kind": "GS"}
+        item_dev = {**seq_LS, "global_kind": "GD"}
+
+    trials = []
+    
+    # HABITUACIÓN (25)
+    for _ in range(HABITUATION_TRIALS):
+        t = item_std.copy()
+        t['phase'] = 'habituation'
+        trials.append(t)
+        
+    # TEST (125) -> 100 Std / 25 Dev
+    n_dev = int(N_TEST_TOTAL * GLOBAL_DEVIANT_PCT) # 25
+    n_std = N_TEST_TOTAL - n_dev                   # 100
+    
+    pool = []
+    for _ in range(n_std): pool.append({**item_std, "phase": "test"})
+    for _ in range(n_dev): pool.append({**item_dev, "phase": "test"})
+    
+    random.shuffle(pool)
+    trials.extend(pool)
+    
+    return trials
+
+# ==============================================================================
+# 4. EJECUCIÓN
+# ==============================================================================
+def run_block(run_idx, block_type, base_side):
+    trials = generate_trials(block_type, base_side)
+    
+    # Preparar Timeline
+    block_data = []
+    curr_t = 3.0
+    
+    for seq_i, item in enumerate(trials):
+        iti = random.choice(ITI_VALUES)
+        for b_i, side in enumerate(item["sides"]):
+            beat = b_i + 1
+            is_active = (beat in ACTIVE_BEATS)
+            trig = encode_trigger(beat, side, item['local_kind'], item['global_kind'])
+            
+            block_data.append({
+                "block_idx": run_idx + 1, "block_type": block_type, "base_side": base_side,
+                "seq_idx": seq_i + 1, "phase": item["phase"], 
+                "local_kind": item["local_kind"], "global_kind": item["global_kind"],
+                "pattern": item["pattern"],
+                "beat": beat, "side": side, "is_active": is_active,
+                "trigger_val": trig if is_active else 0,
+                "onset_time": curr_t
+            })
+            
+            dt = (iti if beat == 5 else SOA_MS) / 1000.0
+            curr_t += dt
+
+    total_dur = curr_t + 2.0
+    
+    msg = f"BLOCK {run_idx+1} / 8\n\nTask: {'VISUAL (Count Letters)' if is_inattentive else 'TACTILE (Count Odd)'}\n\n[SPACE]"
+    instr_stim.text = msg; instr_stim.draw(); win.flip()
+    event.waitKeys(keyList=['space'])
+    
+    block_clock = core.Clock()
+    visual_cycle_start = 0.0
+    idx = 0
+    n_total = len(block_data)
+    
+    non_target_streak = 0
+    current_char = ""
+    block_clock.reset()
+    
+    while block_clock.getTime() < total_dur:
+        now = block_clock.getTime()
+        
+        # Visual
+        if is_inattentive:
+            if now >= (visual_cycle_start + VISUAL_CYCLE):
+                visual_cycle_start = now
+                if (non_target_streak >= MAX_NON_TARGET_STREAK) or (random.random() < TARGET_PROBABILITY):
+                    char = random.choice(TARGETS); non_target_streak = 0
+                else:
+                    char = random.choice(DISTRACTORS); non_target_streak += 1
+                txt_stim.text = char; txt_stim.color = random.choice(VISUAL_COLORS); current_char = char
+
+            if (now - visual_cycle_start) < VISUAL_ON_S:
+                if current_char: txt_stim.draw()
+            win.flip()
+        else:
+            fix_cross.draw(); win.flip()
+
+        # Tactile
+        if idx < n_total:
+            row = block_data[idx]
+            if now >= row['onset_time']:
+                if row['is_active']: send_trigger(row['trigger_val'])
+                idx += 1
+        
+        if 'escape' in event.getKeys(): win.close(); core.quit()
+
+    pd.DataFrame(block_data).to_csv(os.path.join(RUNS_DIR, f"block_{run_idx+1}.csv"), index=False)
+    print(f"Block {run_idx+1} Saved (150 trials).")
+
+# Main
+for i in range(len(session_plan)):
+    run_block(i, session_plan[i][0], session_plan[i][1])
+    if i < len(session_plan) - 1:
+        instr_stim.text = "Break\n[SPACE]"; instr_stim.draw(); win.flip(); event.waitKeys(keyList=['space'])
+
+win.close()
