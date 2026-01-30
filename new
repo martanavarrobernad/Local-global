@@ -155,7 +155,16 @@ else:
         session_plan.append(blocks_visual[i])
         session_plan.append(blocks_tactile[i])
 
-win = visual.Window(size=[1024, 768], color=BG_COLOR, fullscr=False, units='height')
+win = visual.Window(
+    screen=1,                # <--- ESTO ENVÍA LA TAREA AL MONITOR EXTERNO
+    size=[1920, 1080],       # Resolución (ajústala a tu monitor si es diferente)
+    fullscr=True,            # Pantalla completa (sin bordes)
+    monitor='testMonitor',   # Perfil por defecto (no lo toques)
+    color=BG_COLOR,
+    units='height',
+    allowGUI=False,          # Oculta el ratón y menús
+    winType='pyglet'         # Ayuda con doble pantalla en Windows
+)
 txt_stim = visual.TextStim(win, height=0.2, font='Arial', bold=True, text='')
 fix_cross = visual.TextStim(win, text='+', height=0.05, color='black') 
 instr_stim = visual.TextStim(win, height=0.04, color='black', wrapWidth=1.2)
