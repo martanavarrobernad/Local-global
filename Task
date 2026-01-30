@@ -39,7 +39,7 @@ VISUAL_COLORS = ['cyan', '#8B8000', 'black', 'magenta', 'red']
 
 # Visual Params
 VISUAL_ON_S = 0.45
-VISUAL_OFF_S = 0.08
+VISUAL_OFF_S = 0.06
 VISUAL_CYCLE = VISUAL_ON_S + VISUAL_OFF_S
 
 # --- LÓGICA DE LETRAS (FULL ALPHABET) ---
@@ -50,7 +50,7 @@ LETTERS_BASE = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
 STIM_POOL = [L.upper() for L in LETTERS_BASE] + [L.lower() for L in LETTERS_BASE]
 
 # Parámetros de dificultad
-TARGET_PROBABILITY = 0.35
+TARGET_PROBABILITY = 0.25
 MAX_NON_TARGET_STREAK = 5
 MAX_TARGET_STREAK = 2
 
