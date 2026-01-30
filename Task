@@ -51,7 +51,7 @@ STIM_POOL = [L.upper() for L in LETTERS_BASE] + [L.lower() for L in LETTERS_BASE
 
 # Parámetros de dificultad
 TARGET_PROBABILITY = 0.35
-MAX_NON_TARGET_STREAK = 6
+MAX_NON_TARGET_STREAK = 5
 MAX_TARGET_STREAK = 2
 
 # Hardware
