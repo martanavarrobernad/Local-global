@@ -1,10 +1,16 @@
-""""
-GOLD STANDARD: LOCAL-GLOBAL (150 TRIALS VERSION)
-------------------------------------------------
-- 8 Bloques (2 reps x 4 tipos).
-- 150 Trials por bloque (25 Habituación + 125 Test).
-- Duración aprox: ~5 min 20s.
-- ITI: 1350 - 1650 ms.
+"""
+GOLD STANDARD FINAL: LOCAL-GLOBAL (FULL ALPHABET - 4 TARGETS)
+-------------------------------------------------------------
+- BASE: Abecedario completo (26 letras).
+- LOGICA TARGETS:
+    * Se barajan las 26 letras al inicio.
+    * Se cogen 16 para ser targets (4 bloques x 4 targets).
+    * Las 10 letras sobrantes funcionan siempre como distractores.
+- TIEMPOS: 
+    * 8s buffer inicial (letras solas).
+    * Bloque variable (120-130 trials).
+    * 8s buffer final (letras solas).
+- LÓGICA: Anti-repetición visual + Anti-GD consecutivos.
 """
 
 import random
@@ -13,35 +19,40 @@ import pandas as pd
 from psychopy import core, parallel, gui, visual, event
 
 # ==============================================================================
-# 1. PARÁMETROS (AJUSTADOS A 150 TOTAL)
+# 1. PARÁMETROS
 # ==============================================================================
 # Cantidades
-HABITUATION_TRIALS = 25       # Fijos al inicio
-N_TEST_TOTAL = 125            # Fase experimental (125 útiles)
-# Total = 25 + 125 = 150 Trials
-
-GLOBAL_DEVIANT_PCT = 0.20     # 20% de 125 = 25 Deviants
+HABITUATION_TRIALS = 25       
+GLOBAL_DEVIANT_PCT = 0.20     
 
 # Tiempos
 SOA_MS = 150                  
 ACTIVE_BEATS = [1, 4, 5]      
 ITI_VALUES = range(1350, 1651, 50) 
 
-# Configuración Visual (Fondo Gris + Letras Negras/Color)
-# Gris claro para fondo: [0.5, 0.5, 0.5]
+PRE_STIM_BUFFER = 8.0   # Segundos de letras solas AL INICIO
+POST_STIM_BUFFER = 8.0  # Segundos de letras solas AL FINAL
+
+# Configuración Visual
 BG_COLOR = [0.5, 0.5, 0.5]
-VISUAL_COLORS = ['cyan', '#8B8000', 'black', 'magenta', 'red'] # Sin blanco
+VISUAL_COLORS = ['cyan', '#8B8000', 'black', 'magenta', 'red'] 
 
 # Visual Params
-VISUAL_ON_S = 0.60
-VISUAL_OFF_S = 0.10
+VISUAL_ON_S = 0.45
+VISUAL_OFF_S = 0.08
 VISUAL_CYCLE = VISUAL_ON_S + VISUAL_OFF_S
-TARGETS = ['A', 'D', 'T'] # Targets reducidos para simplificar
-LETTERS_BASE = ['A', 'D', 'T', 'X', 'B', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'O', 'P']
-STIM_POOL = [L.upper() for L in LETTERS_BASE]
-DISTRACTORS = [x for x in STIM_POOL if x not in TARGETS]
-TARGET_PROBABILITY = 0.30
-MAX_NON_TARGET_STREAK = 4
+
+# --- LÓGICA DE LETRAS (FULL ALPHABET) ---
+# Usamos las 26 letras. 16 serán targets, 10 sobran (distractores puros).
+LETTERS_BASE = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
+                'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+
+STIM_POOL = [L.upper() for L in LETTERS_BASE] + [L.lower() for L in LETTERS_BASE]
+
+# Parámetros de dificultad
+TARGET_PROBABILITY = 0.35
+MAX_NON_TARGET_STREAK = 6
+MAX_TARGET_STREAK = 2
 
 # Hardware
 EEG_PORT_ADDRESS = 0x0378
@@ -64,48 +75,97 @@ def send_trigger(code):
 def encode_trigger(beat, side, local_kind, global_kind):
     c = 0
     c |= (beat & 0b111)
-    if local_kind == 'LD': c |= 0b00001000
-    if side == "left": c |= 0b00010000
-    elif side == "right": c |= 0b00100000
+    if local_kind == 'LD': c |= 0b0001000
+    if side == "left": c |= 0b00100000     
+    elif side == "right": c |= 0b00010000  
     if global_kind == 'GD': c |= 0b01000000
     return c
 
+def decode_trigger_to_text(trig):
+    if trig == 0: return "No Trigger"
+    beat = trig & 0b111
+    is_ld = "LocDev" if (trig & 0b0001000) else "LocStd"
+    if (trig & 0b00100000): side = "Left"
+    elif (trig & 0b00010000): side = "Right"
+    else: side = "None"
+    is_gd = "GlobDev" if (trig & 0b01000000) else "GlobStd"
+    return f"B{beat}-{side}-{is_ld}-{is_gd}"
+
 # ==============================================================================
-# 2. GUI & SETUP
+# 3. GUI Y CARPETAS
 # ==============================================================================
-dlg = gui.Dlg(title="LOCAL-GLOBAL (150 TRIALS)")
+dlg = gui.Dlg(title="LOCAL-GLOBAL (FULL ALPHABET)")
 dlg.addField("Subject ID:", "001")
-dlg.addField("Condition:", choices=["Inattentive (Visual Task)", "Attentive (Focus on Tactile)"])
+dlg.addField("Order:", choices=["Visual First", "Tactile First", "Interleaved"])
 dlg.show()
 if not dlg.OK: core.quit()
 
 subj_id = dlg.data[0]
-cond_short = "Inatt" if "Inattentive" in dlg.data[1] else "Att"
-is_inattentive = (cond_short == "Inatt")
+order_mode = dlg.data[1]
 
-RUNS_DIR = os.path.join("data_150trials", f"sub-{subj_id}", f"ses-{cond_short}")
-os.makedirs(RUNS_DIR, exist_ok=True)
+DIR_BASE = os.path.join("data_experiment", f"sub-{subj_id}")
+DIR_INATT = os.path.join(DIR_BASE, "ses-Inatt")
+DIR_ATT   = os.path.join(DIR_BASE, "ses-Att")
+os.makedirs(DIR_INATT, exist_ok=True)
+os.makedirs(DIR_ATT, exist_ok=True)
 
-session_plan = [
+# --- REPARTO DE TARGETS ---
+available_letters = LETTERS_BASE.copy()
+random.shuffle(available_letters)
+
+# Cortamos 4 bloques x 4 letras = 16 letras usadas.
+# Las letras del índice 16 al 25 no se asignan y quedan como distractores libres.
+session_targets_pool = [available_letters[i:i+4] for i in range(0, 16, 4)]
+
+# Planificación
+base_configs = [
     ("monotone", "right"), ("monotone", "left"),
     ("discordant", "right"), ("discordant", "left")
-] * 2
-random.shuffle(session_plan)
+]
 
-# Ventana con Fondo Gris Claro
+# Visual
+random.shuffle(base_configs)
+blocks_visual = []
+for i, cfg in enumerate(base_configs):
+    blocks_visual.append({
+        "type": cfg[0], "side": cfg[1], "task": "visual", 
+        "targets": session_targets_pool[i] 
+    })
+
+# Táctil
+random.shuffle(base_configs)
+blocks_tactile = []
+for cfg in base_configs:
+    blocks_tactile.append({
+        "type": cfg[0], "side": cfg[1], "task": "tactile", 
+        "targets": [] 
+    })
+
+if "Visual First" in order_mode:
+    session_plan = blocks_visual + blocks_tactile
+elif "Tactile First" in order_mode:
+    session_plan = blocks_tactile + blocks_visual
+else:
+    session_plan = []
+    for i in range(4):
+        session_plan.append(blocks_visual[i])
+        session_plan.append(blocks_tactile[i])
+
+# ==============================================================================
+# 4. VENTANA
+# ==============================================================================
 win = visual.Window(size=[1024, 768], color=BG_COLOR, fullscr=False, units='height')
 txt_stim = visual.TextStim(win, height=0.2, font='Arial', bold=True, text='')
-fix_cross = visual.TextStim(win, text='+', height=0.05, color='black') # Cruz negra para contraste
+fix_cross = visual.TextStim(win, text='+', height=0.05, color='black') 
 instr_stim = visual.TextStim(win, height=0.04, color='black', wrapWidth=1.2)
 
 # ==============================================================================
-# 3. LÓGICA DE GENERACIÓN
+# 5. GENERADOR DE TRIALS
 # ==============================================================================
 def generate_trials(block_type, base_side):
     side_alt = "left" if base_side == "right" else "right"
-    
-    seq_LS = { "sides": [base_side]*5, "local_kind": "LS", "pattern": base_side[0].upper()*5 }
-    seq_LD = { "sides": [base_side]*4 + [side_alt], "local_kind": "LD", "pattern": base_side[0].upper()*4 + side_alt[0].upper() }
+    seq_LS = { "sides": [base_side]*5, "local_kind": "LS" }
+    seq_LD = { "sides": [base_side]*4 + [side_alt], "local_kind": "LD" }
     
     if block_type == 'monotone':
         item_std = {**seq_LS, "global_kind": "GS"}
@@ -115,106 +175,215 @@ def generate_trials(block_type, base_side):
         item_dev = {**seq_LS, "global_kind": "GD"}
 
     trials = []
-    
-    # HABITUACIÓN (25)
+    # 1. Habituación
     for _ in range(HABITUATION_TRIALS):
-        t = item_std.copy()
-        t['phase'] = 'habituation'
+        t = item_std.copy(); t['phase'] = 'habituation'
         trials.append(t)
         
-    # TEST (125) -> 100 Std / 25 Dev
-    n_dev = int(N_TEST_TOTAL * GLOBAL_DEVIANT_PCT) # 25
-    n_std = N_TEST_TOTAL - n_dev                   # 100
+    # 2. Test (Total variable 120-130)
+    n_total_this_block = random.randint(120, 130)
+    n_dev = int(round(n_total_this_block * GLOBAL_DEVIANT_PCT))
+    n_std = n_total_this_block - n_dev    
     
     pool = []
     for _ in range(n_std): pool.append({**item_std, "phase": "test"})
     for _ in range(n_dev): pool.append({**item_dev, "phase": "test"})
     
-    random.shuffle(pool)
+    # Anti-Consecutive GD
+    while True:
+        random.shuffle(pool)
+        consecutive_found = False
+        for i in range(len(pool) - 1):
+            if pool[i]['global_kind'] == 'GD' and pool[i+1]['global_kind'] == 'GD':
+                consecutive_found = True
+                break
+        if not consecutive_found:
+            break
+
     trials.extend(pool)
-    
     return trials
 
 # ==============================================================================
-# 4. EJECUCIÓN
+# 6. EJECUCIÓN DE BLOQUE
 # ==============================================================================
-def run_block(run_idx, block_type, base_side):
-    trials = generate_trials(block_type, base_side)
+def run_block(run_idx, block_config):
+    block_type = block_config['type']
+    base_side = block_config['side']
+    task_type = block_config['task']
+    current_targets = block_config['targets'] 
     
-    # Preparar Timeline
+    is_visual_task = (task_type == 'visual')
+    
+    print(f"\n{'='*60}")
+    print(f"STARTING BLOCK {run_idx+1}/8")
+    print(f"TASK: {task_type.upper()} | Targets: {current_targets}")
+    print(f"{'='*60}\n")
+    
+    if is_visual_task:
+        # Los distractores son TODO el alfabeto menos los targets de hoy
+        # (Esto incluye automáticamente las 10 letras que sobraron del reparto)
+        current_distractors = [x for x in STIM_POOL if x not in current_targets]
+    
+    trials = generate_trials(block_type, base_side)
+    tactile_solution = len([t for t in trials if t['phase'] == 'test' and t['global_kind'] == 'GD'])
+    
     block_data = []
-    curr_t = 3.0
+    
+    # Pre-Buffer (8s solo visual)
+    curr_t = PRE_STIM_BUFFER 
     
     for seq_i, item in enumerate(trials):
         iti = random.choice(ITI_VALUES)
         for b_i, side in enumerate(item["sides"]):
             beat = b_i + 1
-            is_active = (beat in ACTIVE_BEATS)
-            trig = encode_trigger(beat, side, item['local_kind'], item['global_kind'])
+            is_active = 1 if (beat in ACTIVE_BEATS) else 0 
+            
+            trig_val = encode_trigger(beat, side, item['local_kind'], item['global_kind'])
+            trig_sent = trig_val if is_active else 0
             
             block_data.append({
-                "block_idx": run_idx + 1, "block_type": block_type, "base_side": base_side,
+                "block_idx": run_idx + 1, "block_type": block_type, 
+                "base_side": base_side, "task_type": task_type, 
                 "seq_idx": seq_i + 1, "phase": item["phase"], 
                 "local_kind": item["local_kind"], "global_kind": item["global_kind"],
-                "pattern": item["pattern"],
                 "beat": beat, "side": side, "is_active": is_active,
-                "trigger_val": trig if is_active else 0,
-                "onset_time": curr_t
+                "trigger_val": trig_sent,
+                "trigger_binary": f"'{trig_sent:08b}",
+                "trigger_desc": decode_trigger_to_text(trig_sent),
+                "onset_time": round(curr_t, 3),
+                "visual_now": "", "visual_is_target": 0,
+                "visual_targets_set": "".join(current_targets) if is_visual_task else ""
             })
-            
             dt = (iti if beat == 5 else SOA_MS) / 1000.0
             curr_t += dt
 
-    total_dur = curr_t + 2.0
+    # Post-Buffer (8s solo visual)
+    total_dur = curr_t + POST_STIM_BUFFER
     
-    msg = f"BLOCK {run_idx+1} / 8\n\nTask: {'VISUAL (Count Letters)' if is_inattentive else 'TACTILE (Count Odd)'}\n\n[SPACE]"
-    instr_stim.text = msg; instr_stim.draw(); win.flip()
+    # --- INSTRUCCIONES ---
+    if is_visual_task:
+        target_str = ",  ".join(current_targets)
+        msg = (
+            "VISUAL ATTENTION TASK\n\n"
+            "Count the occurrences of these NEW targets:\n\n"
+            f"-->  {target_str}  <--\n\n"
+            "Please keep a mental count.\n"
+            "IGNORE the stimulation.\n\n"
+            "[Press SPACE to begin]"
+        )
+    else:
+        msg = (
+            "ATTENTION TASK\n\n"
+            "1. Keep your eyes fixed on the cross (+).\n"
+            "2. Pay attention to the stimulation.\n"
+            "3. Count the number of 'odd' sequences.\n\n"
+            "[Press SPACE to begin]"
+        )
+
+    instr_stim.text = msg
+    instr_stim.draw()
+    win.flip()
     event.waitKeys(keyList=['space'])
     
+    # --- BUCLE PRINCIPAL ---
     block_clock = core.Clock()
     visual_cycle_start = 0.0
     idx = 0
     n_total = len(block_data)
     
     non_target_streak = 0
+    target_streak = 0
+    previous_char = ""
     current_char = ""
+    current_is_target = 0
+    visual_solution_counter = 0 
+    
     block_clock.reset()
     
     while block_clock.getTime() < total_dur:
         now = block_clock.getTime()
         
-        # Visual
-        if is_inattentive:
+        # 1. VISUAL (Siempre activo, incluso en buffers)
+        if is_visual_task:
             if now >= (visual_cycle_start + VISUAL_CYCLE):
                 visual_cycle_start = now
-                if (non_target_streak >= MAX_NON_TARGET_STREAK) or (random.random() < TARGET_PROBABILITY):
-                    char = random.choice(TARGETS); non_target_streak = 0
+                
+                should_be_target = False
+                
+                if target_streak >= MAX_TARGET_STREAK: should_be_target = False
+                elif non_target_streak >= MAX_NON_TARGET_STREAK: should_be_target = True
+                elif random.random() < TARGET_PROBABILITY: should_be_target = True
+                
+                if should_be_target:
+                    available = [t for t in current_targets if t != previous_char]
+                    if not available: available = current_targets 
+                    char = random.choice(available)
+                    non_target_streak = 0
+                    target_streak += 1
+                    current_is_target = 1
+                    visual_solution_counter += 1
                 else:
-                    char = random.choice(DISTRACTORS); non_target_streak += 1
-                txt_stim.text = char; txt_stim.color = random.choice(VISUAL_COLORS); current_char = char
+                    available = [d for d in current_distractors if d != previous_char]
+                    char = random.choice(available)
+                    non_target_streak += 1
+                    target_streak = 0
+                    current_is_target = 0
+                
+                txt_stim.text = char
+                txt_stim.color = random.choice(VISUAL_COLORS)
+                current_char = char
+                previous_char = char
+                print(f" [VISUAL] '{char}' {'[TARGET]' if current_is_target else ''}")
 
             if (now - visual_cycle_start) < VISUAL_ON_S:
                 if current_char: txt_stim.draw()
             win.flip()
+            
         else:
-            fix_cross.draw(); win.flip()
+            fix_cross.draw()
+            win.flip()
 
-        # Tactile
+        # 2. TÁCTIL (Solo dentro del bloque de trials)
         if idx < n_total:
             row = block_data[idx]
             if now >= row['onset_time']:
-                if row['is_active']: send_trigger(row['trigger_val'])
+                if row['is_active']: 
+                    send_trigger(row['trigger_val'])
+                    print(f" >> TRIG: {row['trigger_desc']} (Code: {row['trigger_val']})")
+                
+                block_data[idx]['visual_now'] = current_char if is_visual_task else "CROSS"
+                block_data[idx]['visual_is_target'] = current_is_target if is_visual_task else 0
                 idx += 1
         
         if 'escape' in event.getKeys(): win.close(); core.quit()
 
-    pd.DataFrame(block_data).to_csv(os.path.join(RUNS_DIR, f"block_{run_idx+1}.csv"), index=False)
-    print(f"Block {run_idx+1} Saved (150 trials).")
+    # --- GUARDADO ---
+    df = pd.DataFrame(block_data)
+    if is_visual_task: folder = DIR_INATT 
+    else: folder = DIR_ATT
+    fname = os.path.join(folder, f"block_{run_idx+1}_{task_type}.csv")
+    df.to_csv(fname, index=False)
+    
+    # --- FEEDBACK ---
+    print("\n" + "#"*50)
+    print(f"   FIN DEL BLOQUE {run_idx+1} - SOLUCIÓN")
+    print("#"*50)
+    if is_visual_task:
+        print(f" >> TAREA VISUAL: El sujeto debe decir: {visual_solution_counter}")
+        print(f"    (Targets usados: {current_targets})")
+    else:
+        print(f" >> TAREA TÁCTIL: El sujeto debe decir: {tactile_solution}")
+    print("#"*50 + "\n")
 
-# Main
-for i in range(len(session_plan)):
-    run_block(i, session_plan[i][0], session_plan[i][1])
+# ==============================================================================
+# 7. MAIN LOOP
+# ==============================================================================
+for i, blk_cfg in enumerate(session_plan):
+    run_block(i, blk_cfg)
     if i < len(session_plan) - 1:
-        instr_stim.text = "Break\n[SPACE]"; instr_stim.draw(); win.flip(); event.waitKeys(keyList=['space'])
+        instr_stim.text = "BREAK\n\nRelax for a moment.\n\n[SPACE] to continue"
+        instr_stim.draw()
+        win.flip()
+        event.waitKeys(keyList=['space'])
 
 win.close()
