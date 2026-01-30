@@ -47,7 +47,7 @@ LETTERS_BASE = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
                 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
 STIM_POOL = [L.upper() for L in LETTERS_BASE] + [L.lower() for L in LETTERS_BASE]
 
-TARGETS_PER_BLOCK = 5         
+TARGETS_PER_BLOCK = 4      
 TARGET_PROBABILITY = 0.35
 MAX_NON_TARGET_STREAK = 4
 MAX_TARGET_STREAK = 2
@@ -271,7 +271,7 @@ def run_block(run_idx, block_config):
         target_str = ",  ".join(current_targets)
         msg = (
             "VISUAL ATTENTION TASK\n\n"
-            "Count the occurrences of these 5 NEW targets:\n\n"
+            "Count the occurrences of these 4 NEW targets:\n\n"
             f"-->  {target_str}  <--\n\n"
             "Please keep a mental count.\n"
             "IGNORE the stimulation.\n\n"
